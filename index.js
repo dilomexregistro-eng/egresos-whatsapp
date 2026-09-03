@@ -3,15 +3,35 @@ const app = express();
 
 app.use(express.json({ limit: '10mb' }));
 
-// Endpoint de salud, para confirmar que Railway levantó el servicio
 app.get('/', (req, res) => {
   res.send('Bot de egresos activo ✅');
 });
 
-// Endpoint que recibirá el webhook de Whapi.Cloud
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
   console.log('--- Webhook recibido ---');
-  console.log(JSON.stringify(req.body, null, 2));
+
+  const messages = req.body.messages || [];
+
+  for (const msg of messages) {
+    if (msg.from_me) continue; // ignoramos mensajes que él mismo envía
+
+    if (msg.type === 'text') {
+      console.log(`Texto recibido de ${msg.from}: "${msg.text?.body}"`);
+    }
+
+    if (msg.type === 'image' && msg.image?.link) {
+      console.log(`Imagen recibida de ${msg.from}. Descargando desde: ${msg.image.link}`);
+      try {
+        const response = await fetch(msg.image.link);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        console.log(`✅ Imagen descargada correctamente. Tamaño: ${buffer.length} bytes, mime_type: ${msg.image.mime_type}`);
+      } catch (err) {
+        console.error('❌ Error descargando la imagen:', err.message);
+      }
+    }
+  }
+
   res.sendStatus(200);
 });
 
