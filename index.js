@@ -75,7 +75,14 @@ async function extraerComprobante(imageUrl) {
     throw new Error(`OpenAI respondió con error: ${JSON.stringify(data)}`);
   }
 
-  return JSON.parse(data.output_text);
+  const mensaje = data.output?.find((item) => item.type === 'message');
+  const textoSalida = mensaje?.content?.find((c) => c.type === 'output_text')?.text;
+
+  if (!textoSalida) {
+    throw new Error(`No se encontró texto de salida. Respuesta completa: ${JSON.stringify(data)}`);
+  }
+
+  return JSON.parse(textoSalida);
 }
 
 app.post('/webhook', async (req, res) => {
