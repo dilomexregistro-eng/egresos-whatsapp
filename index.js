@@ -7,6 +7,7 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/', (req, res) => {
   res.send('Bot de egresos activo ✅');
 });
+
 app.get('/diagnostico', (req, res) => {
   try {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64 || '';
@@ -25,7 +26,7 @@ app.get('/diagnostico', (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-});
+
 // ---------- Catálogo de cuentas del negocio ----------
 const CUENTAS = [
   { nombre: 'CONSTRUCTORA ALCOME SA DE CV', banco: 'BANBAJIO', numero: '51109290201' },
@@ -67,7 +68,7 @@ async function obtenerAccessToken() {
   const encodedClaimSet = base64url(Buffer.from(JSON.stringify(claimSet)));
   const signingInput = `${encodedHeader}.${encodedClaimSet}`;
 
-    const privateKeyObject = crypto.createPrivateKey({
+  const privateKeyObject = crypto.createPrivateKey({
     key: credentials.private_key,
     format: 'pem',
     type: 'pkcs8',
