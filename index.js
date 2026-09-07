@@ -13,6 +13,7 @@ app.get('/diagnostico', (req, res) => {
     const decoded = Buffer.from(raw, 'base64').toString('utf-8');
     const credentials = JSON.parse(decoded);
     res.json({
+      version_de_node: process.version,
       longitud_variable_b64: raw.length,
       longitud_json_decodificado: decoded.length,
       client_email: credentials.client_email,
@@ -23,6 +24,7 @@ app.get('/diagnostico', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
 });
 // ---------- Catálogo de cuentas del negocio ----------
 const CUENTAS = [
