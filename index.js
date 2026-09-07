@@ -1,4 +1,5 @@
 const express = require('express');
+const { google } = require('googleapis');
 const app = express();
 
 app.use(express.json({ limit: '10mb' }));
@@ -21,8 +22,41 @@ function buscarCuenta(digitosDetectados) {
   return { match: null, candidatos };
 }
 
+// ---------- Google Sheets ----------
+const SPREADSHEET_ID = '1BgFe384lj58R3pRolR2KeZiDsjMiIevctGVmuaoe880';
+const SHEET_NAME = 'Registro';
+
+async function guardarEnSheets(record) {
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  const sheets = google.sheets({ version: 'v4', auth });
+
+  const fila = [
+    record.FECHA,
+    record.REFERENCIA,
+    record.CLASIFICACION,
+    record.PLAN_DE_CUENTA,
+    record.CLIENTE_PROVEEDOR,
+    record.METODO_DE_PAGO,
+    record.BANCO,
+    record.MONTO,
+    record.ESTADO,
+    record.FECHA_DE_PAGO,
+  ];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A:J`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [fila] },
+  });
+}
+
 // ---------- Estado en memoria de conversaciones pendientes ----------
-const pendientes = new Map(); // chat_id -> { step, record, candidatos }
+const pendientes = new Map();
 
 // ---------- Enviar mensaje de WhatsApp ----------
 async function enviarMensaje(chatId, texto) {
@@ -98,6 +132,7 @@ async function extraerComprobante(imageUrl) {
 
 // ---------- Construir el registro final ----------
 function construirRegistroBase(datos, bancoResuelto) {
+  const montoConMoneda = datos.moneda ? `${datos.monto} ${datos.moneda}` : datos.monto;
   return {
     FECHA: datos.fecha,
     REFERENCIA: datos.referencia,
@@ -106,18 +141,34 @@ function construirRegistroBase(datos, bancoResuelto) {
     CLIENTE_PROVEEDOR: datos.destinatario,
     METODO_DE_PAGO: datos.cuenta_destino ? 'Transferencia' : 'Efectivo',
     BANCO: bancoResuelto,
-    MONTO: datos.monto,
-    MONEDA: datos.moneda,
+    MONTO: montoConMoneda,
     ESTADO: 'COMPLETADO',
     FECHA_DE_PAGO: datos.fecha,
   };
 }
 
-async function finalizarRegistro(chatId, record) {
-  console.log('✅ EGRESO LISTO PARA GUARDAR:');
-  console.log(JSON.stringify(record, null, 2));
-  await enviarMensaje(chatId, '✅ Egreso registrado con todos los datos capturados.');
-  pendientes.delete(chatId);
+function formatearResumen(record) {
+  return `📋 Resumen del egreso:
+
+FECHA: ${record.FECHA || '(sin dato)'}
+REFERENCIA: ${record.REFERENCIA || '(sin dato)'}
+CLASIFICACIÓN: ${record.CLASIFICACION || '(pendiente)'}
+PLAN DE CUENTA: ${record.PLAN_DE_CUENTA || '(pendiente)'}
+CLIENTE/PROVEEDOR: ${record.CLIENTE_PROVEEDOR || '(sin dato)'}
+MÉTODO DE PAGO: ${record.METODO_DE_PAGO}
+BANCO: ${record.BANCO || '(sin dato)'}
+MONTO: ${record.MONTO || '(sin dato)'}
+ESTADO: ${record.ESTADO}
+FECHA DE PAGO: ${record.FECHA_DE_PAGO || '(sin dato)'}
+
+¿Es correcto?
+1. Sí, guardar
+2. No, cancelar`;
+}
+
+async function preguntarConfirmacion(chatId, record) {
+  pendientes.set(chatId, { step: 'confirmacion', record });
+  await enviarMensaje(chatId, formatearResumen(record));
 }
 
 async function preguntarClasificacion(chatId, record) {
@@ -137,7 +188,6 @@ app.post('/webhook', async (req, res) => {
     if (msg.from_me) continue;
     const chatId = msg.chat_id;
 
-    // ----- Mensaje de imagen: inicia un nuevo egreso -----
     if (msg.type === 'image' && msg.image?.link) {
       console.log(`Imagen recibida de ${msg.from}. Analizando con OpenAI...`);
       try {
@@ -148,7 +198,6 @@ app.post('/webhook', async (req, res) => {
         const { match, candidatos } = buscarCuenta(digitos);
 
         if (candidatos.length > 1) {
-          // Ambigüedad: preguntamos cuál cuenta es
           const opciones = candidatos
             .map((c, i) => `${i + 1}. ${c.nombre} (${c.banco})`)
             .join('\n');
@@ -172,7 +221,6 @@ app.post('/webhook', async (req, res) => {
       continue;
     }
 
-    // ----- Mensaje de texto: puede ser respuesta a una pregunta pendiente -----
     if (msg.type === 'text') {
       const texto = (msg.text?.body || '').trim();
       const pendiente = pendientes.get(chatId);
@@ -199,7 +247,7 @@ app.post('/webhook', async (req, res) => {
           pendientes.set(chatId, { step: 'clasificacion_texto', record: pendiente.record });
           await enviarMensaje(chatId, 'Escribe la clasificación:');
         } else if (texto === '2') {
-          await finalizarRegistro(chatId, pendiente.record);
+          await preguntarConfirmacion(chatId, pendiente.record);
         } else {
           await enviarMensaje(chatId, 'Responde 1 (capturar ahora) o 2 (dejar pendiente).');
         }
@@ -215,7 +263,28 @@ app.post('/webhook', async (req, res) => {
 
       if (pendiente.step === 'plan_cuenta_texto') {
         pendiente.record.PLAN_DE_CUENTA = texto;
-        await finalizarRegistro(chatId, pendiente.record);
+        await preguntarConfirmacion(chatId, pendiente.record);
+        continue;
+      }
+
+      if (pendiente.step === 'confirmacion') {
+        if (texto === '1') {
+          try {
+            await guardarEnSheets(pendiente.record);
+            console.log('✅ EGRESO GUARDADO EN GOOGLE SHEETS:', JSON.stringify(pendiente.record));
+            await enviarMensaje(chatId, '✅ Egreso registrado en el Sheet.');
+          } catch (err) {
+            console.error('❌ Error guardando en Google Sheets:', err.message);
+            await enviarMensaje(chatId, '❌ Hubo un error guardando en el Sheet. Avísale a Arturo.');
+          }
+          pendientes.delete(chatId);
+        } else if (texto === '2') {
+          console.log('❌ Egreso cancelado por el usuario.');
+          await enviarMensaje(chatId, '❌ Registro cancelado. Puedes volver a mandar el comprobante.');
+          pendientes.delete(chatId);
+        } else {
+          await enviarMensaje(chatId, 'Responde 1 (guardar) o 2 (cancelar).');
+        }
         continue;
       }
     }
