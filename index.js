@@ -65,7 +65,11 @@ async function obtenerAccessToken() {
   const encodedClaimSet = base64url(Buffer.from(JSON.stringify(claimSet)));
   const signingInput = `${encodedHeader}.${encodedClaimSet}`;
 
-  const privateKeyObject = crypto.createPrivateKey(credentials.private_key);
+    const privateKeyObject = crypto.createPrivateKey({
+    key: credentials.private_key,
+    format: 'pem',
+    type: 'pkcs8',
+  });
   const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), privateKeyObject);
   const jwt = `${signingInput}.${base64url(signature)}`;
 
