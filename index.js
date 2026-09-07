@@ -27,7 +27,7 @@ const SPREADSHEET_ID = '1BgFe384lj58R3pRolR2KeZiDsjMiIevctGVmuaoe880';
 const SHEET_NAME = 'Registro';
 
 async function guardarEnSheets(record) {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+    const credentials = JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64, 'base64').toString('utf-8'));
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
