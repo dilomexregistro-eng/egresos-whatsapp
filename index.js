@@ -1,5 +1,5 @@
 const express = require('express');
-const { google } = require('googleapis');
+const crypto = require('crypto');
 const app = express();
 
 app.use(express.json({ limit: '10mb' }));
@@ -22,17 +22,55 @@ function buscarCuenta(digitosDetectados) {
   return { match: null, candidatos };
 }
 
-// ---------- Google Sheets ----------
+// ---------- Google Sheets (autenticación manual, sin librería googleapis) ----------
 const SPREADSHEET_ID = '1BgFe384lj58R3pRolR2KeZiDsjMiIevctGVmuaoe880';
 const SHEET_NAME = 'Registro';
 
-async function guardarEnSheets(record) {
-    const credentials = JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64, 'base64').toString('utf-8'));
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+function base64url(buffer) {
+  return buffer.toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+async function obtenerAccessToken() {
+  const credentials = JSON.parse(
+    Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64, 'base64').toString('utf-8')
+  );
+
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const claimSet = {
+    iss: credentials.client_email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now,
+  };
+
+  const encodedHeader = base64url(Buffer.from(JSON.stringify(header)));
+  const encodedClaimSet = base64url(Buffer.from(JSON.stringify(claimSet)));
+  const signingInput = `${encodedHeader}.${encodedClaimSet}`;
+
+  const privateKeyObject = crypto.createPrivateKey(credentials.private_key);
+  const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), privateKeyObject);
+  const jwt = `${signingInput}.${base64url(signature)}`;
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
   });
-  const sheets = google.sheets({ version: 'v4', auth });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`Error obteniendo access token: ${JSON.stringify(data)}`);
+  }
+  return data.access_token;
+}
+
+async function guardarEnSheets(record) {
+  const accessToken = await obtenerAccessToken();
 
   const fila = [
     record.FECHA,
@@ -47,12 +85,22 @@ async function guardarEnSheets(record) {
     record.FECHA_DE_PAGO,
   ];
 
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:J`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [fila] },
+  const range = encodeURIComponent(`${SHEET_NAME}!A:J`);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ values: [fila] }),
   });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`Error de Sheets API: ${JSON.stringify(data)}`);
+  }
 }
 
 // ---------- Estado en memoria de conversaciones pendientes ----------
