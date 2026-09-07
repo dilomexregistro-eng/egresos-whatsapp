@@ -9,22 +9,42 @@ app.get('/', (req, res) => {
 });
 
 app.get('/diagnostico', (req, res) => {
+  const resultado = {
+    version_de_node: process.version,
+  };
   try {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64 || '';
     const decoded = Buffer.from(raw, 'base64').toString('utf-8');
     const credentials = JSON.parse(decoded);
-    res.json({
-      version_de_node: process.version,
-      longitud_variable_b64: raw.length,
-      longitud_json_decodificado: decoded.length,
-      client_email: credentials.client_email,
-      private_key_longitud: credentials.private_key.length,
-      private_key_inicio: credentials.private_key.slice(0, 30),
-      private_key_final: credentials.private_key.slice(-30),
-    });
+    resultado.client_email = credentials.client_email;
+    resultado.private_key_longitud = credentials.private_key.length;
+
+    try {
+      const keyObject = crypto.createPrivateKey({
+        key: credentials.private_key,
+        format: 'pem',
+        type: 'pkcs8',
+      });
+      resultado.crear_llave = 'OK';
+      resultado.tipo_llave = keyObject.asymmetricKeyType;
+      resultado.tamano_llave_bits = keyObject.asymmetricKeyDetails?.modulusLength;
+
+      try {
+        const firma = crypto.sign('RSA-SHA256', Buffer.from('prueba'), keyObject);
+        resultado.firmar = 'OK';
+        resultado.firma_longitud = firma.length;
+      } catch (errFirma) {
+        resultado.firmar = 'ERROR';
+        resultado.error_firmar = errFirma.message;
+      }
+    } catch (errLlave) {
+      resultado.crear_llave = 'ERROR';
+      resultado.error_crear_llave = errLlave.message;
+    }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    resultado.error_general = err.message;
   }
+  res.json(resultado);
 });
 
 // ---------- Catálogo de cuentas del negocio ----------
