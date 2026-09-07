@@ -7,7 +7,23 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/', (req, res) => {
   res.send('Bot de egresos activo ✅');
 });
-
+app.get('/diagnostico', (req, res) => {
+  try {
+    const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64 || '';
+    const decoded = Buffer.from(raw, 'base64').toString('utf-8');
+    const credentials = JSON.parse(decoded);
+    res.json({
+      longitud_variable_b64: raw.length,
+      longitud_json_decodificado: decoded.length,
+      client_email: credentials.client_email,
+      private_key_longitud: credentials.private_key.length,
+      private_key_inicio: credentials.private_key.slice(0, 30),
+      private_key_final: credentials.private_key.slice(-30),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // ---------- Catálogo de cuentas del negocio ----------
 const CUENTAS = [
   { nombre: 'CONSTRUCTORA ALCOME SA DE CV', banco: 'BANBAJIO', numero: '51109290201' },
