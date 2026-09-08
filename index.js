@@ -56,7 +56,9 @@ const CUENTAS = [
 
 function buscarCuenta(digitosDetectados) {
   if (!digitosDetectados) return { match: null, candidatos: [] };
-  const candidatos = CUENTAS.filter((c) => c.numero.endsWith(digitosDetectados));
+    const candidatos = CUENTAS.filter(
+    (c) => c.numero.endsWith(digitosDetectados) || digitosDetectados.endsWith(c.numero)
+  );
   if (candidatos.length === 1) return { match: candidatos[0], candidatos };
   return { match: null, candidatos };
 }
